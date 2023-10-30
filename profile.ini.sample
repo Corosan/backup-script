@@ -1,0 +1,43 @@
+# This file contains configuration describing "areas" needed to be archived
+# and a "destination area" where the archives are going to be placed. Each
+# area consists of a number of properties:
+#  * part_uuid - a partition UUID how lsblk -o UUID displays it
+#  * crypt_part_uuid - an optional encrypted partition UUID
+#  * root_dir - a relative root directory for making an archive
+#  * paths - a comma-separated list of paths to archive relative to the
+#      partition root. Defauit - '.'
+#  * excludes - a list of exclusions (globs). Default - empty. Direct paths
+#      deeper than particular exclusion have bigger precedence, for
+#      example: 'excludes = dir/*' will exclude all the content of the
+#      'dir', but having 'paths = dir1/file1' - will include particular
+#      file from that dir.
+
+# Describe all the areas to be archived
+areas = efi, boot, system, home
+
+[efi]
+part_uuid = 4BD5-9D1E
+
+[boot]
+part_uuid = 999aa52a-60ba-4001-9ce3-cfefa33c7360
+
+[system]
+part_uuid = 606b55c3-a691-45c7-a51f-993afb594d88
+crypt_part_uuid = 13cdc447-805a-4360-b907-8cc2f21a8700
+excludes = home, home/*, tmp/*, var/cache/apt/archives/*
+
+[home]
+part_uuid = 05e57b03-5752-446f-8626-b4ffb4f6e7ac
+crypt_part_uuid = 17bbae8f-8514-475d-8404-eb1dab1127ff
+root_dir = home/user1
+excludes = work/repo.git/*, work/build*/*, \
+  work/*-exported
+paths = ., work/repo.git/config, work/repo.git/config.worktree
+
+# The section describe special area where the archives will go
+[destination]
+part_uuid = 88721056-4049-4ed7-a83f-4a596a7b03dd
+crypt_part_uuid = c8057727-cfe6-4094-ab89-02a1ca65553e
+dir = backups
+template_arch_name = work-nb-gnome-{area}-{date}
+min_size_available = 20g
