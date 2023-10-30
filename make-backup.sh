@@ -37,6 +37,7 @@ Simple backup utility for archiving a number of 'areas'. Under 'area' term I mea
 a partition containing some filesystem structure which needs to be archived. All
 parameters including areas are described in a properties file 'profile.ini' placed
 near this script.
+                             (c) 2023 Vyacheslav V. Grigoryev <armagvvg@gmail.com>
 
 Usage: ${prog_name} [OPTIONS]
 
@@ -179,8 +180,8 @@ function ensure_part_mounted {
       crypt_uuid=$(get_prop_value crypt_part_uuid "$area")
       if [[ -n ${crypt_uuid} ]]; then
         echo "found crypto drive for area '$area', trying to open it"
-        tmp=$(lsblk -o UUID,PATH | sed -n "s/^$crypt_uuid\\s\\+//p")
-        [[ -n $tmp ]] || { echo "not found a device path for crypto drive" >&2; return 1; }
+        tmp=$(lsblk -o UUID,PATH | sed -n "s/^${crypt_uuid}\\s\\+//p")
+        [[ -n $tmp ]] || { echo "not found a device path for crypto drive uuid=$crypt_uuid" >&2; return 1; }
         cryptsetup open "$tmp" "${area// /_}_disk"
         finalizers+=("cryptsetup close \"${area// /_}_disk\"")
         # if the opened encrypted device contains an LVM physical volume belonging to a
@@ -308,12 +309,12 @@ suff=
 curr_date=$(date +%Y%m%d)
 while true; do
   for area in "${areas[@]}"; do
-    arch_name=$(replace_placeholders "$template_arch_name" "area=$area" "date=$curr_date")$suff.tar.bz2
-    [[ -f $dest_path/$arch_name ]] && { suff=${suff}_; break; }
+    arch_name=$(replace_placeholders "$template_arch_name" "area=$area" "date=$curr_date")$suff
+    [[ -f $dest_path/$arch_name.tar.bz2 ]] && { suff=${suff}_; break; }
   done
   if [ "${suff%_}" = "${suff}" ]; then
     # Finally reintegrate the suffix and the date inside the template
-    template_arch_name=$(replace_placeholders "$template_arch_name" "date=$curr_date")$suff.tar.bz2
+    template_arch_name=$(replace_placeholders "$template_arch_name" "date=$curr_date")$suff
     break
   fi
   [ -z "$suff" ] && suff=-1 || { suff=${suff%_}; suff=-$(( ${suff#-} + 1 )); }
@@ -338,7 +339,7 @@ fi
 # can be created unfortunatelly
 declare -A pids_to_wait=()
 for area in "${areas[@]}"; do
-  log_path=$(mktemp -p "$tmpdir_for_mounts" log-$area-XXXXXX)
+  log_path=$dest_path/$(replace_placeholders "$template_arch_name" "area=$area").log
   echo "--- starting to archive '$area' area, log: $log_path"
   root_dir=$(get_prop_value root_dir "$area")
   paths=$(get_prop_value paths "$area")
@@ -364,7 +365,7 @@ for area in "${areas[@]}"; do
   fi
 
   cmd+=(-cvjf "$dest_path/$(replace_placeholders "$template_arch_name" "area=$area")" \
-    --acls --xattrs --one-file-system -p -s -C "${mountpoints[$area]}${root_dir:+/${root_dir}}" \
+    --acls --xattrs --one-file-system -p -C "${mountpoints[$area]}${root_dir:+/${root_dir}}" \
     "${dest_excludes[@]}" "${dest_paths[@]}")
 
   "${cmd[@]}" &>"$log_path" &
@@ -385,6 +386,7 @@ while [[ ${#pids_to_wait[@]} -gt 0 ]]; do
     keep_tmp_dir=1
   else
     echo "finished with archiving partition at area '$area'"
+    bzip2 "$log_path"
   fi
 done
 
