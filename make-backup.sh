@@ -44,8 +44,10 @@ Usage: ${prog_name} [OPTIONS]
 Options:
   -h, --help - this help message
   --debug N  - do not make real archiving, simulate. N=1 do not even make
-               operations requiring root privileges like mounting. N=2 -
-               make mounting/unmounting but do not make archiving
+               operations requiring root privileges like mounting. N=2 - make
+               mounting/unmounting but do not make archiving. Instead of archiving
+               a dummy script is created and executed which dumps expected
+               archving command line, sleeps and fails in a couple of scenarios
 EOF
   }
 
@@ -221,6 +223,12 @@ function remove_mounts_dir {
   fi
 }
 
+function term_children {
+  for p in "${!pids_to_wait[@]}"; do
+    /usr/bin/kill -TERM -- -$p
+  done
+}
+
 function finalize_fcn {
   for (( i = ${#finalizers[*]}; i != 0; --i )); do
     eval "${finalizers[$i-1]}"
@@ -327,17 +335,21 @@ if [[ $debug_mode -ne 0 ]]; then
 for a in "\$@"; do
   echo "arg: -=\$a=-"
 done
-sleep 3
+sleep 5
 [[ \$1 == "--fail" ]] && exit 1
 exit 0
 EOF
   chmod u+x "$dest_path/dummy-exec.sh"
 fi
 
+trap term_children SIGINT
+
 # Starting to archive all the partitions in parallel using bash background jobs.
 # Coprocessors would be more suitable for this but due to a bug only one coprocessor
-# can be created unfortunatelly
+# can be created unfortunatelly. Logs are made in order to find later what files an
+# archive contains because it's too compute-intensive to list tar.xxx archives
 declare -A pids_to_wait=()
+declare -a files_to_cleanup_on_interrupt=()
 for area in "${areas[@]}"; do
   log_path=$dest_path/$(replace_placeholders "$template_arch_name" "area=$area").log
   echo "--- starting to archive '$area' area, log: $log_path"
@@ -364,11 +376,24 @@ for area in "${areas[@]}"; do
     cmd=("$dest_path/dummy-exec.sh" --fail)
   fi
 
-  cmd+=(-cvjf "$dest_path/$(replace_placeholders "$template_arch_name" "area=$area")" \
+  arch_path=$dest_path/$(replace_placeholders "$template_arch_name" "area=$area").tar.bz2
+  files_to_cleanup_on_interrupt+=("$log_path" "${arch_path}")
+
+  cmd+=(-cvjf "$arch_path" \
     --acls --xattrs --one-file-system -p -C "${mountpoints[$area]}${root_dir:+/${root_dir}}" \
     "${dest_excludes[@]}" "${dest_paths[@]}")
 
-  "${cmd[@]}" &>"$log_path" &
+  # Starting background tasks by ordinary way causes these taks/commands to be placed in the same
+  # process group as this script is. They are executed with SIGINT handler masked out as long as
+  # a job control is switched of (and it does actually, because a job control is switched on
+  # inside interactive shell only, not inside scripts started by the shell). Then there is a
+  # problem - how to abort these commands when a user presses Ctrl+C? One way is to list all
+  # children issued by the command started here but it's complicated and has potential race
+  # conditions. Another way is to place each command into the new process group. It's done here
+  # with a call to setsid helper which places a command into a new session and makes it a process
+  # group leader in it. It worth to say that the process still has SIGINT masked, so finalization
+  # trap here uses SIGTERM for terminating these background tasks.
+  setsid "${cmd[@]}" &>"$log_path" &
   pids_to_wait+=($! "${area}_+_$log_path")
 done
 
@@ -376,6 +401,13 @@ final_ret_code=0
 while [[ ${#pids_to_wait[@]} -gt 0 ]]; do
   ret_code=0
   wait -n -p cur_pid "${!pids_to_wait[@]}" || ret_code=$?
+  if [[ $ret_code -ge 128 ]]; then
+    echo "interrupted by user"
+    for f in "${files_to_cleanup_on_interrupt[@]}"; do
+      [[ -f $f ]] && rm -v "$f"
+    done
+    exit 3
+  fi
   area=${pids_to_wait[$cur_pid]}
   unset pids_to_wait[$cur_pid]
   log_path=${area#*_+_}
@@ -387,6 +419,7 @@ while [[ ${#pids_to_wait[@]} -gt 0 ]]; do
   else
     echo "finished with archiving partition at area '$area'"
     bzip2 "$log_path"
+    files_to_cleanup_on_interrupt+=("${log_path}.bz2")
   fi
 done
 
