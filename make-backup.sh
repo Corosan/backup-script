@@ -31,23 +31,26 @@ function die {
   exit 1
 }
 
+# Usage scenario doesn't describe a --debug option intended for internal usage:
+#  --debug N  - do not make real archiving, simulate. N=1 do not even make
+#               operations requiring root privileges like mounting. N=2 - make
+#               mounting/unmounting but do not make archiving. Instead of archiving
+#               a dummy script is created and executed which dumps expected
+#               archving command line, sleeps and fails in a couple of scenarios
+
 function usage {
   cat <<EOF
-Simple backup utility for archiving a number of 'areas'. Under 'area' term I mean
-a partition containing some filesystem structure which needs to be archived. All
-parameters including areas are described in a properties file 'profile.ini' placed
-near this script.
+Simple backup utility for archiving a number of 'areas'. The 'area' term means
+a partition containing some filesystem structure which needs to be archived. There
+can be a few areas on the same partition. All parameters including areas are
+described in a properties file 'profile.ini' located near this script.
+
                              (c) 2023 Vyacheslav V. Grigoryev <armagvvg@gmail.com>
 
 Usage: ${prog_name} [OPTIONS]
 
 Options:
   -h, --help - this help message
-  --debug N  - do not make real archiving, simulate. N=1 do not even make
-               operations requiring root privileges like mounting. N=2 - make
-               mounting/unmounting but do not make archiving. Instead of archiving
-               a dummy script is created and executed which dumps expected
-               archving command line, sleeps and fails in a couple of scenarios
 EOF
   }
 
@@ -383,16 +386,19 @@ for area in "${areas[@]}"; do
     --acls --xattrs --one-file-system -p -C "${mountpoints[$area]}${root_dir:+/${root_dir}}" \
     "${dest_excludes[@]}" "${dest_paths[@]}")
 
-  # Starting background tasks by ordinary way causes these taks/commands to be placed in the same
-  # process group as this script is. They are executed with SIGINT handler masked out as long as
-  # a job control is switched of (and it does actually, because a job control is switched on
-  # inside interactive shell only, not inside scripts started by the shell). Then there is a
-  # problem - how to abort these commands when a user presses Ctrl+C? One way is to list all
-  # children issued by the command started here but it's complicated and has potential race
-  # conditions. Another way is to place each command into the new process group. It's done here
-  # with a call to setsid helper which places a command into a new session and makes it a process
-  # group leader in it. It worth to say that the process still has SIGINT masked, so finalization
-  # trap here uses SIGTERM for terminating these background tasks.
+  # Bash has a feature called job control which allows to put tasks in background and control them
+  # by dedicated commands. The tasks are placed into separate process groups in this way.  This
+  # feature works only when a user executes a task with '&' from an interactive shell.  But when the
+  # same command line with '&' at the end is executed by another script, the job control feature is
+  # turned off. The task is placed in the same process group. Moreover SIGINT and SIGQUIT handlers
+  # in each process of the task are masked out (see part 3.7.6 "Signals" of bash info). How to abort
+  # tasks by pressing Ctrl+C in this way? One approach is to kill background processes by their pids
+  # issuing some non-masked signal, for instance SIGTERM. But those processes can create any number
+  # of children too. The scripts needs to track the whole hierarchy for example with 'ps' tool. More
+  # robust way is to place all the tasks into separate process group and send a termination signal
+  # into that group as whole. There is no clear way to place all the tasks into the same process
+  # group from a shell but a 'setsid' helper exists which allows to run a command under new session
+  # id.  The command has to be in a new process group as a consequence.
   setsid "${cmd[@]}" &>"$log_path" &
   pids_to_wait+=($! "${area}_+_$log_path")
 done
