@@ -412,7 +412,8 @@ while [[ ${#pids_to_wait[@]} -gt 0 ]]; do
     for f in "${files_to_cleanup_on_interrupt[@]}"; do
       [[ -f $f ]] && rm -v "$f"
     done
-    exit 3
+    trap - SIGINT
+    kill -s SIGINT $$
   fi
   area=${pids_to_wait[$cur_pid]}
   unset pids_to_wait[$cur_pid]
