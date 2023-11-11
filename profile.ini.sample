@@ -1,6 +1,7 @@
 # This file contains configuration describing "areas" needed to be archived
 # and a "destination area" where the archives are going to be placed. Each
 # area consists of a number of properties:
+#
 #  * part_uuid - a partition UUID how lsblk -o UUID displays it
 #  * crypt_part_uuid - an optional encrypted partition UUID
 #  * root_dir - a relative root directory for making an archive
@@ -11,6 +12,18 @@
 #      example: 'excludes = dir/*' will exclude all the content of the
 #      'dir', but having 'paths = dir1/file1' - will include particular
 #      file from that dir.
+#
+# There is special 'destination' area - it must not be enumerated in 'ares'
+# option. It describes a place where put final tarballs into. It has next
+# properties:
+#
+#  * part_uuid - the same as above
+#  * crypt_part_uuid - the same a above
+#  * dir - optional relative path to a directory for backups
+#  * template_arch_name - a template name for tarballs without extension; it
+#      must contain two placeholders - {area} and {date}
+#  * min_size_available - minimum free space which must be available on the
+#      partition described by this area
 
 # Describe all the areas to be archived
 areas = efi, boot, system, home
