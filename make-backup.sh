@@ -282,6 +282,9 @@ template_arch_name=$(get_prop_value template_arch_name destination)
 [[ -n $template_arch_name && $template_arch_name == *{area}* ]] || \
   die "there is no mandatory 'template_arch_name' parameter for destination area \
 or it doesn't contain {area} placeholder"
+ext=${template_arch_name##*.}
+[[ $ext != "gz" && $ext != "bz2" && $ext != "xz" && $ext != "tar" && $ext != "7z" ]] || \
+  die "compression or archiving extension shouldn't be specified in 'template_arch_name' parameter"
 
 tmpdir_for_mounts=$(mktemp -d)
 finalizers+=("remove_mounts_dir \"$tmpdir_for_mounts\"")
@@ -320,8 +323,10 @@ suff=
 curr_date=$(date +%Y%m%d)
 while true; do
   for area in "${areas[@]}"; do
+    c=$(get_prop_value compression "$area")
+    [[ -z $c ]] && c=.bz2 || { [[ $c == "none" ]] && c=; }
     arch_name=$(replace_placeholders "$template_arch_name" "area=$area" "date=$curr_date")$suff
-    [[ -f $dest_path/$arch_name.tar.bz2 ]] && { suff=${suff}_; break; }
+    [[ -f $dest_path/$arch_name.tar$c ]] && { suff=${suff}_; break; }
   done
   if [ "${suff%_}" = "${suff}" ]; then
     # Finally reintegrate the suffix and the date inside the template
@@ -379,10 +384,19 @@ for area in "${areas[@]}"; do
     cmd=("$dest_path/dummy-exec.sh" --fail)
   fi
 
-  arch_path=$dest_path/$(replace_placeholders "$template_arch_name" "area=$area").tar.bz2
+  arch_path=$dest_path/$(replace_placeholders "$template_arch_name" "area=$area").tar
+  arch_f=
+  c=$(get_prop_value compression "$area")
+  if [[ -z $c || $c == ?(.)bz2 ]]; then
+    arch_path=$arch_path.bz2; arch_f=-j
+  elif [[ $c == ?(.)gz ]]; then
+    arch_path=$arch_path.gz; arch_f=-z
+  elif [[ $c == ?(.)xz ]]; then
+    arch_path=$arch_path.xz; arch_f=-J
+  fi
   files_to_cleanup_on_interrupt+=("$log_path" "${arch_path}")
 
-  cmd+=(-cvjf "$arch_path" \
+  cmd+=(-cv $arch_f -f "$arch_path" \
     --acls --xattrs --one-file-system -p -C "${mountpoints[$area]}${root_dir:+/${root_dir}}" \
     "${dest_excludes[@]}" "${dest_paths[@]}")
 

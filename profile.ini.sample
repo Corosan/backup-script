@@ -7,6 +7,10 @@
 #  * root_dir - a relative root directory for making an archive
 #  * paths - a comma-separated list of paths to archive relative to the
 #      partition root. Defauit - '.'
+#  * compression - optional parameter denoting compression method after
+#      tar'ing. Supported: 'bz2' (default), 'gz', 'xz', 'none' - to not
+#      compress (could be useful if already compressed data is archived
+#      like multimedia content)
 #  * excludes - a list of exclusions (globs). Default - empty. Direct paths
 #      deeper than particular exclusion have bigger precedence, for
 #      example: 'excludes = dir/*' will exclude all the content of the
