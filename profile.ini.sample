@@ -17,6 +17,10 @@
 #      'dir', but having 'paths = dir1/file1' - will include particular
 #      file from that dir.
 #
+# All comma-separated lists can contain commas in values - they must be
+# double-escaped. For instance: key = val1, val2, val\\, comma
+# Which will be parsed as: "val1", "val2", "val, comma".
+#
 # There is special 'destination' area - it must not be enumerated in 'ares'
 # option. It describes a place where put final tarballs into. It has next
 # properties:

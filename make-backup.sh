@@ -86,7 +86,7 @@ function get_prop_value {
 }
 
 # Split an input string $1 by a separator $3 or comma by default. Separate values can't contain
-# a separator even escaped. An output is assigned to an array variable which name is placed into $2
+# an unescaped separator. An output is assigned to an array variable which name is placed into $2
 function split_by_sep {
   local str=$1
   local out_var=$2
@@ -97,11 +97,13 @@ function split_by_sep {
   [[ -n $out_var ]] || return
   [[ -n $sep ]] || sep=,
 
+  str=${str//\\,/some-fake-separator-123d}
   local old_ifs=$IFS
   IFS=$sep
   for v in $str; do
     v="${v#${v%%[! ]*}}"
     v="${v%${v##*[! ]}}"
+    v=${v//some-fake-separator-123d/,}
     v_out+=("$v")
   done
   IFS=$old_ifs
@@ -162,10 +164,11 @@ function ensure_part_mounted {
   [[ -n $area && -n $uuid ]] || { echo "no uuid for area '$area' configured" >&2; return 1; }
 
   while true; do
-    tmp=($(lsblk -o UUID,PATH,MOUNTPOINT | sed -n "s/^$uuid\\s\\+//p"))
+    tmp=($(lsblk -ro UUID,PATH,MOUNTPOINT | sed -n "s/^$uuid\\s\\+//p"))
     if [[ ${#tmp[*]} -eq 2 ]]; then
-      echo "found a mount path ${tmp[1]} for area '$area'"
-      mountpoints[$area]=${tmp[1]}
+      mp=$(echo -e "${tmp[1]}")
+      echo "found a mount path '$mp' for area '$area'"
+      mountpoints[$area]=$mp
       # even if automounting happened for an encrypted device when the script opened it and
       # a mountpoint has been found without direct mounting - add unmounting step into finalizers
       # in order to successfully close the encrypted device at the end
@@ -227,6 +230,7 @@ function remove_mounts_dir {
 }
 
 function term_children {
+  echo "sending SIGTERM to all children process groups..."
   for p in "${!pids_to_wait[@]}"; do
     /usr/bin/kill -TERM -- -$p
   done
@@ -413,6 +417,12 @@ for area in "${areas[@]}"; do
   # into that group as whole. There is no clear way to place all the tasks into the same process
   # group from a shell but a 'setsid' helper exists which allows to run a command under new session
   # id.  The command has to be in a new process group as a consequence.
+  #
+  # When a user presses Ctrl+C, SIGINT is sent to this process (because only this process belongs to
+  # the session connected to the terminal). A trap has been set for the signal, which in turn sends
+  # SIGTERM signals into each child process group. When a waiting cycle in this script receives an
+  # exit code from any child, it removes all previously created files and after clearing a signal
+  # disposition sends a SIGINT to himself again.
   setsid "${cmd[@]}" &>"$log_path" &
   pids_to_wait+=($! "${area}_+_$log_path")
 done
@@ -421,11 +431,13 @@ final_ret_code=0
 while [[ ${#pids_to_wait[@]} -gt 0 ]]; do
   ret_code=0
   wait -n -p cur_pid "${!pids_to_wait[@]}" || ret_code=$?
+  # 128 ret code is returned when the wait is interrupted with a signal (SIGINT in our case)
   if [[ $ret_code -ge 128 ]]; then
     echo "interrupted by user"
     for f in "${files_to_cleanup_on_interrupt[@]}"; do
       [[ -f $f ]] && rm -v "$f"
     done
+    echo "sending SIGINT to myself after resetting the signal disposition"
     trap - SIGINT
     kill -s SIGINT $$
   fi
