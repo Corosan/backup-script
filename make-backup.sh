@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# (c) 2023 Vyacheslav V. Grigoryev <armagvvg@gmail.com>
+# (c) 2023-2025 Vyacheslav V. Grigoryev <armagvvg@gmail.com>
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of version 3 of the GNU General Public
@@ -110,6 +110,23 @@ function split_by_sep {
   eval $out_var='("${v_out[@]}")'
 }
 
+# Return an archive extension for specified area in $1. The extension is returned with leading dot.
+function get_compression_ext {
+  local area=$1
+  local c
+
+  c=$(get_prop_value compression "$area")
+  if [[ -z $c || $c == ?(.)bz2 ]]; then
+    echo .bz2
+  elif [[ $c == ?(.)gz ]]; then
+    echo .gz
+  elif [[ $c == ?(.)xz ]]; then
+    echo .xz
+  elif [[ $c == ?(.)zstd ]]; then
+    echo .zst
+  fi
+}
+
 function expand_classified_number {
   local str=$1
   local mult=1
@@ -156,15 +173,21 @@ function replace_placeholders {
 # lvm group.
 function ensure_part_mounted {
   local area=$1
-  local uuid crypt_uuid tmp
+  local part_uuid fs_uuid crypt_fs_uuid tmp
   local crypt_opened=0
 
-  uuid=$(get_prop_value part_uuid "$area")
+  part_uuid=$(get_prop_value part_uuid "$area")
+  fs_uuid=$(get_prop_value fs_uuid "$area")
 
-  [[ -n $area && -n $uuid ]] || { echo "no uuid for area '$area' configured" >&2; return 1; }
+  [[ -n $area && ( -n $part_uuid || -n $fs_uuid) ]] \
+    || { echo "no fs_uuid or part_uuid for area '$area' configured" >&2; return 1; }
 
   while true; do
-    tmp=($(lsblk -ro UUID,PATH,MOUNTPOINT | sed -n "s/^$uuid\\s\\+//p"))
+    if [[ -n $part_uuid ]]; then
+      tmp=($(lsblk -ro PARTUUID,PATH,MOUNTPOINT | sed -n "s/^$part_uuid\\s\\+//p"))
+    else
+      tmp=($(lsblk -ro UUID,PATH,MOUNTPOINT | sed -n "s/^$fs_uuid\\s\\+//p"))
+    fi
     if [[ ${#tmp[*]} -eq 2 ]]; then
       mp=$(echo -e "${tmp[1]}")
       echo "found a mount path '$mp' for area '$area'"
@@ -185,11 +208,11 @@ function ensure_part_mounted {
       finalizers+=("umount -v \"$mnt_path\"")
       return
     elif [[ $crypt_opened -eq 0 ]]; then
-      crypt_uuid=$(get_prop_value crypt_part_uuid "$area")
-      if [[ -n ${crypt_uuid} ]]; then
+      crypt_fs_uuid=$(get_prop_value crypt_fs_uuid "$area")
+      if [[ -n ${crypt_fs_uuid} ]]; then
         echo "found crypto drive for area '$area', trying to open it"
-        tmp=$(lsblk -o UUID,PATH | sed -n "s/^${crypt_uuid}\\s\\+//p")
-        [[ -n $tmp ]] || { echo "not found a device path for crypto drive uuid=$crypt_uuid" >&2; return 1; }
+        tmp=$(lsblk -o UUID,PATH | sed -n "s/^${crypt_fs_uuid}\\s\\+//p")
+        [[ -n $tmp ]] || { echo "not found a device path for crypto drive uuid=$crypt_fs_uuid" >&2; return 1; }
         cryptsetup open "$tmp" "${area// /_}_disk"
         finalizers+=("cryptsetup close \"${area// /_}_disk\"")
         # if the opened encrypted device contains an LVM physical volume belonging to a
@@ -276,18 +299,19 @@ done
 split_by_sep "$(get_prop_value areas)" areas
 [[ ${#areas[@]} -gt 0 ]] || die "there are no areas to backup"
 for a in "${areas[@]}"; do
-  [[ -n $(get_prop_value part_uuid "$a") ]] || \
-    die "there is no mandatory 'part_uuid' parameter for area '$a'"
+  [[ -n $(get_prop_value part_uuid "$a") || -n $(get_prop_value fs_uuid "$a") ]] || \
+    die "there is no mandatory 'fs_uuid' or 'part_uuid' parameter for area '$a'"
 done
 
-[[ -n $(get_prop_value part_uuid destination) ]] || \
-  die "there is no mandatory 'part_uuid' parameter for destination area"
+[[ -n $(get_prop_value part_uuid destination) || -n $(get_prop_value fs_uuid destination) ]] || \
+  die "there is no mandatory 'fs_uuid' or 'part_uuid' parameter for destination area"
 template_arch_name=$(get_prop_value template_arch_name destination)
 [[ -n $template_arch_name && $template_arch_name == *{area}* ]] || \
   die "there is no mandatory 'template_arch_name' parameter for destination area \
 or it doesn't contain {area} placeholder"
 ext=${template_arch_name##*.}
-[[ $ext != "gz" && $ext != "bz2" && $ext != "xz" && $ext != "tar" && $ext != "7z" ]] || \
+# 'template_arch_name' must not have a suffix looking like a compression method
+[[ $ext != "gz" && $ext != "bz2" && $ext != "xz" && $ext != "tar" && $ext != 'zstd' && $ext != "7z" ]] || \
   die "compression or archiving extension shouldn't be specified in 'template_arch_name' parameter"
 
 tmpdir_for_mounts=$(mktemp -d)
@@ -322,15 +346,15 @@ fi
 echo "available size on destination drive: $(( avail_size / 1024 / 1024 ))M"
 
 # Determine a pattern for destination names for archives and check that they don't overwrite
-# anything alreay existing on a destination drive
+# anything alreay existing on a destination drive. '_' at the end of suffix is a mark that
+# simular archive names exist and the script must try to select another one.
 suff=
 curr_date=$(date +%Y%m%d)
 while true; do
   for area in "${areas[@]}"; do
-    c=$(get_prop_value compression "$area")
-    [[ -z $c ]] && c=.bz2 || { [[ $c == "none" ]] && c=; }
+    ext=$(get_compression_ext "$area")
     arch_name=$(replace_placeholders "$template_arch_name" "area=$area" "date=$curr_date")$suff
-    [[ -f $dest_path/$arch_name.tar$c ]] && { suff=${suff}_; break; }
+    [[ -f $dest_path/$arch_name.tar$ext ]] && { suff=${suff}_; break; }
   done
   if [ "${suff%_}" = "${suff}" ]; then
     # Finally reintegrate the suffix and the date inside the template
@@ -389,16 +413,16 @@ for area in "${areas[@]}"; do
   fi
 
   arch_path=$dest_path/$(replace_placeholders "$template_arch_name" "area=$area").tar
+  arch_path=$arch_path$(get_compression_ext "$area")
+
   arch_f=
   c=$(get_prop_value compression "$area")
-  if [[ -z $c || $c == ?(.)bz2 ]]; then
-    arch_path=$arch_path.bz2; arch_f=-j
-  elif [[ $c == ?(.)gz ]]; then
-    arch_path=$arch_path.gz; arch_f=-z
-  elif [[ $c == ?(.)xz ]]; then
-    arch_path=$arch_path.xz; arch_f=-J
-  fi
-  files_to_cleanup_on_interrupt+=("$log_path" "${arch_path}")
+  [[ -z $c || $c == ?(.)bz2 ]] && arch_f=-j
+  [[ $c == ?(.)gz ]] && arch_f=-z
+  [[ $c == ?(.)xz ]] && arch_f=-J
+  [[ $c == ?(.)zstd ]] && arch_f=--zstd
+
+  files_to_cleanup_on_interrupt+=("$log_path" "$arch_path")
 
   cmd+=(-cv $arch_f -f "$arch_path" \
     --acls --xattrs --one-file-system -p -C "${mountpoints[$area]}${root_dir:+/${root_dir}}" \

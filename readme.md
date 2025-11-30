@@ -1,11 +1,12 @@
-  [Purpose]
+# Purpose
 
 How to backup an ordinary linux system? Usually it's enough to boot from some life CD, find
 partitions where efi, boot and system areas are located and to make tarballs on them (possibly with
 storing various extended attributes of the files). The task for searching and mounting the
 partitions can be annoying a little bit. Furthermore the partitions can be located on encrypted
 drive, which make these things even more annoying. This script is intended to execute these steps
-automatically based on a description in a simple ini file.
+automatically based on a description in a simple ini file. Or, more precisely, semi-automatically,
+because entering a password for encrypted device is still manual operation.
 
 Created tarballs are placed into another 'area' which can be the same disk inside the machine or
 for instance a removable drive for storing backups.

@@ -2,30 +2,32 @@
 # and a "destination area" where the archives are going to be placed. Each
 # area consists of a number of properties:
 #
-#  * part_uuid - a partition UUID how lsblk -o UUID displays it
-#  * crypt_part_uuid - an optional encrypted partition UUID
+#  * part_uuid - a partition UUID how lsblk -o PARTUUID displays it
+#  * fs_uuid - a fs UUID how lsblk -o UUID displays it
+#  * crypt_fs_uuid - an optional encrypted fs UUID
 #  * root_dir - a relative root directory for making an archive
 #  * paths - a comma-separated list of paths to archive relative to the
 #      partition root. Defauit - '.'
 #  * compression - optional parameter denoting compression method after
-#      tar'ing. Supported: 'bz2' (default), 'gz', 'xz', 'none' - to not
-#      compress (could be useful if already compressed data is archived
-#      like multimedia content)
-#  * excludes - a list of exclusions (globs). Default - empty. Direct paths
-#      deeper than particular exclusion have bigger precedence, for
-#      example: 'excludes = dir/*' will exclude all the content of the
-#      'dir', but having 'paths = dir1/file1' - will include particular
-#      file from that dir.
+#      tar'ing. Supported: 'bz2' (default), 'gz', 'xz', 'zstd', 'none' -
+#      - to not compress (could be useful if already compressed data is
+#      archived like multimedia content).
+#  * excludes - a list of exclusions (globs) relative to {root_dir}.
+#      Default - empty. Direct paths deeper than particular exclusion have
+#      bigger precedence, for example: 'excludes = dir/*' will exclude all
+#      the content of the 'dir', but having 'paths = dir1/file1' - will
+#      include particular file from that dir.
 #
 # All comma-separated lists can contain commas in values - they must be
 # double-escaped. For instance: key = val1, val2, val\\, comma
 # Which will be parsed as: "val1", "val2", "val, comma".
 #
-# There is special 'destination' area - it must not be enumerated in 'ares'
+# There is special 'destination' area - it must not be enumerated in 'areas'
 # option. It describes a place where put final tarballs into. It has next
 # properties:
 #
 #  * part_uuid - the same as above
+#  * fs_uuid - the same as above
 #  * crypt_part_uuid - the same a above
 #  * dir - optional relative path to a directory for backups
 #  * template_arch_name - a template name for tarballs without extension; it
